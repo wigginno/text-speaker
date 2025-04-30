@@ -10,6 +10,8 @@ jobs:
     name: Build and Release
     runs-on: ubuntu-latest # Using ubuntu-latest for cross-compilation
 
+    permissions: # Grant write access to contents for release creation
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
