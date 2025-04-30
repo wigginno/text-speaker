@@ -4,100 +4,170 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
+using TextSpeaker.Models; // Required for ServiceResult and Settings
 
 namespace TextSpeaker.Services
 {
     public class AzureSpeechService : IAzureSpeechService
     {
-        private readonly AzureSpeechConfiguration _config;
-        private const int MaxChunkSize = 4000;
+        private readonly ISettingsService _settingsService; // Changed from IConfiguration
+        private SpeechConfig? _speechConfig;
+        private bool _isConfigValid = false;
 
-        public AzureSpeechService(AzureSpeechConfiguration config)
+        // Constructor updated to inject ISettingsService
+        public AzureSpeechService(ISettingsService settingsService)
         {
-            if (config == null)
-                throw new ArgumentNullException(nameof(config));
-            if (string.IsNullOrWhiteSpace(config.Key))
-                throw new ArgumentException("Azure Speech key is required.", nameof(config.Key));
-            if (string.IsNullOrWhiteSpace(config.Region))
-                throw new ArgumentException("Azure Speech region is required.", nameof(config.Region));
-
-            _config = config;
+            _settingsService = settingsService;
+            UpdateSpeechConfig();
+            // Optional: Hook into a settings changed event if ISettingsService provides one
+            // to automatically update the config when settings are saved externally.
         }
 
-        public async Task<List<VoiceInfo>> GetVoicesAsync(string? locale = null)
+        // Helper method to create/update SpeechConfig based on current settings
+        private void UpdateSpeechConfig()
         {
+            var settings = _settingsService.CurrentSettings;
+            string? key = settings?.AzureSpeechKey;
+            string? region = settings?.AzureSpeechRegion;
+
+            _isConfigValid = !string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(region);
+
+            if (_isConfigValid)
+            {
+                _speechConfig = SpeechConfig.FromSubscription(key!, region!);
+                // Optional: Configure logging for the SDK
+                // _speechConfig.SetProperty(PropertyId.Speech_LogFilename, "speech_sdk_log.txt");
+            }
+            else
+            {
+                _speechConfig = null; // Ensure config is null if settings are invalid
+            }
+        }
+
+        // Method to explicitly refresh config if settings might have changed
+        public void RefreshConfiguration()
+        {
+            UpdateSpeechConfig();
+        }
+
+        // Removed locale parameter
+        public async Task<ServiceResult<List<VoiceInfo>>> GetVoicesAsync()
+        {
+            // Ensure config is up-to-date before use
+            // (Could be redundant if we assume config is always fresh, but safe)
+            RefreshConfiguration();
+
+            if (!_isConfigValid || _speechConfig == null)
+            {
+                return new ServiceResult<List<VoiceInfo>>(false, null, "Azure credentials not configured. Please check Settings.");
+            }
+
+            var voices = new List<VoiceInfo>();
             try
             {
-                var speechConfig = SpeechConfig.FromSubscription(_config.Key, _config.Region);
-                using var synthesizer = new SpeechSynthesizer(speechConfig, null);
-                var result = locale == null
-                    ? await synthesizer.GetVoicesAsync()
-                    : await synthesizer.GetVoicesAsync(locale);
+                using var synthesizer = new SpeechSynthesizer(_speechConfig);
+                using var result = await synthesizer.GetVoicesAsync();
+
                 if (result.Reason == ResultReason.VoicesListRetrieved)
                 {
-                    return result.Voices.ToList();
+                    voices.AddRange(result.Voices);
+                    return new ServiceResult<List<VoiceInfo>>(true, voices.OrderBy(v => v.LocalName).ToList(), null);
                 }
-                else
+                else if (result.Reason == ResultReason.Canceled)
                 {
-                    Console.WriteLine($"Failed to retrieve voices: {result.Reason}");
-                    return new List<VoiceInfo>();
+                    // Simplified cancellation handling for GetVoicesAsync
+                    // CancellationDetails.FromResult is not applicable to SynthesisVoicesResult
+                    string errorDetails = $"Voice retrieval was canceled. ResultId: {result.ResultId}";
+                    Console.WriteLine(errorDetails); // Log the cancellation
+                    return new ServiceResult<List<VoiceInfo>>(false, null, errorDetails);
+                }
+                else // Should not happen based on SDK docs for GetVoicesAsync
+                {
+                    return new ServiceResult<List<VoiceInfo>>(false, null, $"Unknown error retrieving voices. ResultReason: {result.Reason}");
                 }
             }
             catch (Exception ex)
             {
+                // Catch potential exceptions during SDK interaction (e.g., network issues)
                 Console.WriteLine($"Exception in GetVoicesAsync: {ex}");
-                return new List<VoiceInfo>();
+                return new ServiceResult<List<VoiceInfo>>(false, null, $"An unexpected error occurred: {ex.Message}");
             }
         }
 
-        public async Task<bool> SynthesizeTextToFileAsync(string text, string voiceName, string outputFilePath)
+        // Return type explicitly set to ServiceResult<bool>
+        public async Task<ServiceResult<bool>> SynthesizeTextToFileAsync(string text, string voiceName, string outputFilePath)
         {
-            var speechConfig = SpeechConfig.FromSubscription(_config.Key, _config.Region);
-            speechConfig.SpeechSynthesisVoiceName = voiceName;
-            speechConfig.SetSpeechSynthesisOutputFormat(SpeechSynthesisOutputFormat.Audio16Khz128KBitRateMonoMp3);
+            // Ensure config is up-to-date
+            RefreshConfiguration();
 
-            using var audioConfig = AudioConfig.FromWavFileOutput(outputFilePath);
-            using var synthesizer = new SpeechSynthesizer(speechConfig, audioConfig);
-
-            bool overallSuccess = true;
-            var chunks = SplitTextIntoChunks(text, MaxChunkSize);
-
-            foreach (var chunk in chunks)
+            if (!_isConfigValid || _speechConfig == null)
             {
-                var result = await synthesizer.SpeakTextAsync(chunk);
+                return new ServiceResult<bool>(false, false, "Azure credentials not configured. Please check Settings.");
+            }
+            if (string.IsNullOrEmpty(text))
+            {
+                return new ServiceResult<bool>(false, false, "Input text cannot be empty.");
+            }
+            if (string.IsNullOrEmpty(voiceName))
+            {
+                 return new ServiceResult<bool>(false, false, "Voice name must be selected.");
+            }
+            if (string.IsNullOrEmpty(outputFilePath))
+            {
+                 return new ServiceResult<bool>(false, false, "Output file path cannot be empty.");
+            }
+
+            try
+            {
+                // Set the desired voice on the config *before* creating the synthesizer
+                _speechConfig.SpeechSynthesisVoiceName = voiceName;
+
+                // Set the output format to MP3
+                _speechConfig.SetSpeechSynthesisOutputFormat(SpeechSynthesisOutputFormat.Audio16Khz32KBitRateMonoMp3);
+
+                // For MP3 format, we need to use a FileStream to save the result after synthesis
+                // First create a synthesizer without output file
+                using var synthesizer = new SpeechSynthesizer(_speechConfig);
+
+                // Synthesize the text to audio stream (MP3 format as configured by SetSpeechSynthesisOutputFormat)
+                using var result = await synthesizer.SpeakTextAsync(text);
+
+                // Check the result
                 if (result.Reason == ResultReason.SynthesizingAudioCompleted)
                 {
-                    // Success
+                    // Write the audio data to the specified file
+                    using (var fileStream = File.Create(outputFilePath))
+                    {
+                        var audioData = result.AudioData;
+                        await fileStream.WriteAsync(audioData, 0, audioData.Length);
+                    }
+                    
+                    Console.WriteLine($"Speech synthesized for text [{text.Substring(0, Math.Min(text.Length, 20))}...] to [{outputFilePath}]");
+                    return new ServiceResult<bool>(true, true, null);
                 }
                 else if (result.Reason == ResultReason.Canceled)
                 {
                     var cancellation = SpeechSynthesisCancellationDetails.FromResult(result);
-                    Console.WriteLine($"Synthesis canceled: {cancellation.Reason}, {cancellation.ErrorDetails}");
-                    overallSuccess = false;
+                    Console.WriteLine($"Speech synthesis canceled: Reason={cancellation.Reason}");
+                    if (cancellation.Reason == CancellationReason.Error)
+                    {
+                        Console.WriteLine($"Speech synthesis canceled: ErrorCode={cancellation.ErrorCode}, ErrorDetails=[{cancellation.ErrorDetails}]\nDid you update the subscription info?");
+                        return new ServiceResult<bool>(false, false, $"Synthesis failed: {cancellation.ErrorDetails}");
+                    }
+                    return new ServiceResult<bool>(false, false, $"Synthesis canceled: {cancellation.Reason}");
                 }
                 else
                 {
-                    Console.WriteLine($"Synthesis failed: {result.Reason}");
-                    overallSuccess = false;
+                    Console.WriteLine($"Speech synthesis completed with unexpected reason: {result.Reason}");
+                    return new ServiceResult<bool>(false, false, $"Synthesis failed with unexpected reason: {result.Reason}");
                 }
             }
-
-            return overallSuccess;
-        }
-
-        private static List<string> SplitTextIntoChunks(string text, int maxChunkSize)
-        {
-            var chunks = new List<string>();
-            int current = 0;
-            while (current < text.Length)
+            catch(Exception ex)
             {
-                int length = Math.Min(maxChunkSize, text.Length - current);
-                chunks.Add(text.Substring(current, length));
-                current += length;
+                Console.WriteLine($"Exception in SynthesizeTextToFileAsync: {ex}");
+                return new ServiceResult<bool>(false, false, $"An unexpected error occurred during synthesis: {ex.Message}");
             }
-            return chunks;
         }
     }
 }

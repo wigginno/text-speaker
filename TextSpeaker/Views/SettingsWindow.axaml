@@ -1,0 +1,43 @@
+<!-- TextSpeaker/Views/SettingsWindow.axaml -->
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:TextSpeaker.ViewModels"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        x:DataType="vm:SettingsViewModel"
+        mc:Ignorable="d" d:DesignWidth="450" d:DesignHeight="250"
+        x:Class="TextSpeaker.Views.SettingsWindow"
+        Icon="/Assets/avalonia-logo.ico"
+        Title="Settings"
+        CanResize="False"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner">
+
+    <!-- Design Time Data Context -->
+    <Design.DataContext>
+        <vm:SettingsViewModel/>
+    </Design.DataContext>
+
+    <Grid Margin="15" RowDefinitions="Auto,Auto,Auto,Auto">
+
+        <StackPanel Grid.Row="0" Spacing="5">
+            <TextBlock Text="Azure AI Speech Configuration" FontWeight="Bold"/>
+            <TextBlock Text="Enter your Azure Speech resource Key and Region below." TextWrapping="Wrap"/>
+        </StackPanel>
+
+        <StackPanel Grid.Row="1" Spacing="8" Margin="0,15,0,0">
+            <TextBlock Text="Speech Key:"/>
+            <TextBox Text="{Binding AzureSpeechKey, Mode=TwoWay}" Watermark="Enter Azure Speech Key"/>
+            <TextBlock Text="Region:" Margin="0,5,0,0"/>
+            <TextBox Text="{Binding AzureSpeechRegion, Mode=TwoWay}" Watermark="Enter Azure Speech Region (e.g., eastus)"/>
+        </StackPanel>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right" Margin="0,15,0,0">
+            <Button Content="Save" Command="{Binding SaveCommand}" IsEnabled="{Binding SaveCommand.CanExecute}" IsDefault="True"/>
+            <Button Content="Close" Command="{Binding CloseCommand}" IsCancel="True"/>
+        </StackPanel>
+
+        <TextBlock Grid.Row="3" Text="{Binding StatusMessage}" TextWrapping="Wrap" Margin="0,10,0,0" MinHeight="30" VerticalAlignment="Bottom"/>
+
+    </Grid>
+</Window>
