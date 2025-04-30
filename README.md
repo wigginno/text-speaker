@@ -2,6 +2,8 @@
 
 A simple desktop app for TTS using Azure AI Speech services. Choose a voice and convert your text into an audio file (mp3).
 
+![image](https://github.com/user-attachments/assets/39951665-5a26-4b95-83b0-155fd0fa910a)
+
 ## Features
 
 *   Convert text to speech using Azure AI Services
