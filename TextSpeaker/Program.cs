@@ -1,70 +1,103 @@
-﻿using Avalonia;
+using Avalonia;
+using Avalonia.Controls; 
 using Avalonia.Controls.ApplicationLifetimes;
-using Avalonia.Controls;
+using Microsoft.Extensions.Configuration; 
+using Microsoft.Extensions.DependencyInjection;
 using System;
 using System.IO;
-using Microsoft.Extensions.Configuration;
-using TextSpeaker.Services; // Placeholder for future services
-using TextSpeaker.ViewModels; // Placeholder for future viewmodels
+using System.Threading.Tasks;
+using TextSpeaker.Services;
+using TextSpeaker.ViewModels;
+using TextSpeaker.Views;
 
 namespace TextSpeaker
 {
-    public class AzureSpeechConfiguration
-    {
-        public string? Key { get; set; }
-        public string? Region { get; set; }
-    }
-
     sealed class Program
     {
-        // Initialization code. Don't use any Avalonia, third-party APIs or any
-        // SynchronizationContext-reliant code before AppMain is called: things aren't initialized
-        // yet and stuff might break.
         [STAThread]
-        public static void Main(string[] args)
+        public static void Main(string[] args) 
         {
-            IConfiguration config = new ConfigurationBuilder()
-                //.AddJsonFile("appsettings.json", optional: true, reloadOnChange: true) // Uncomment if/when using JSON config
-                .AddUserSecrets<Program>()
+            // --- Configuration Setup ---
+            var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            var settingsDir = Path.Combine(appDataPath, "TextSpeaker");
+            Directory.CreateDirectory(settingsDir); 
+            var settingsPath = Path.Combine(settingsDir, "settings.json");
+
+            // Build configuration incorporating settings.json, env vars, and command line
+            var configuration = new ConfigurationBuilder()
+                .SetBasePath(Directory.GetCurrentDirectory())
+                .AddJsonFile("appsettings.json", optional: true, reloadOnChange: true)
+                .AddJsonFile(settingsPath, optional: true, reloadOnChange: true) 
+                .AddEnvironmentVariables()
+                .AddCommandLine(args)
                 .Build();
 
-            var azureSpeechConfig = config.GetSection("AzureSpeech").Get<AzureSpeechConfiguration>();
+            // --- Dependency Injection Setup ---
+            var services = new ServiceCollection();
+            ConfigureServices(services, configuration, settingsPath); 
 
-            if (string.IsNullOrWhiteSpace(azureSpeechConfig?.Key) ||
-                string.IsNullOrWhiteSpace(azureSpeechConfig?.Region))
+            // --- Provide DI Container to App ---
+            var serviceProvider = services.BuildServiceProvider();
+            App.Services = serviceProvider; 
+
+            // --- Build and Run Avalonia App ---
+            try
             {
-                throw new InvalidOperationException("AzureSpeech:Key and AzureSpeech:Region must be set in user secrets.");
+                var appBuilder = BuildAvaloniaApp();
+                appBuilder.StartWithClassicDesktopLifetime(args, ShutdownMode.OnMainWindowClose);
             }
-
-                        // Instantiate services here
-                        var azureSpeechConfigObj = new AzureSpeechConfiguration
-                        {
-                            Key = azureSpeechConfig.Key!,
-                            Region = azureSpeechConfig.Region!
-                        };
-                        var azureSpeechService = new AzureSpeechService(azureSpeechConfigObj);
-                        Func<TopLevel?> topLevelProvider = () => App.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop ? desktop.MainWindow : null;
-                        var dialogService = new DialogService(topLevelProvider);
-
-                        // Instantiate viewmodel here
-                        var mainWindowViewModel = new MainWindowViewModel(azureSpeechService, dialogService);
-            
-                        try
-                        {
-                            BuildAvaloniaApp(mainWindowViewModel).StartWithClassicDesktopLifetime(args);
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.Error.WriteLine($"Application failed to start: {ex}");
-                            throw;
-                        }
+            catch (Exception e)
+            {
+                Console.WriteLine($"FATAL: Avalonia startup failed: {e}");
+                // Consider logging to a file or showing a message box if possible before exiting
+            }
         }
 
-        // Avalonia configuration, don't remove; also used by visual designer.
-        public static AppBuilder BuildAvaloniaApp(MainWindowViewModel vm)
-            => AppBuilder.Configure(() => new App(vm))
+        public static AppBuilder BuildAvaloniaApp()
+            => AppBuilder.Configure<App>()
                 .UsePlatformDetect()
                 .WithInterFont()
                 .LogToTrace();
+                // .UseReactiveUI(); 
+
+        private static void ConfigureServices(IServiceCollection services, IConfiguration configuration, string settingsPath)
+        {
+            // Register IConfiguration (built from multiple sources)
+            services.AddSingleton(configuration);
+
+            // Register Settings Service (Singleton) - Pass the specific path
+            services.AddSingleton<ISettingsService>(sp => new SettingsService(settingsPath));
+
+            // Register other services
+            // AzureSpeechService now depends on IConfiguration
+            services.AddSingleton<IAzureSpeechService, AzureSpeechService>();
+
+            // Dialog Service needs TopLevel provider
+            services.AddSingleton<Func<TopLevel?>>(GetTopLevelProvider); 
+            services.AddSingleton<IDialogService, DialogService>();
+
+            // Register ViewModels
+            services.AddTransient<MainWindowViewModel>();
+            services.AddTransient<SettingsViewModel>();
+        }
+
+        // Helper to get TopLevel provider function
+        private static Func<TopLevel?> GetTopLevelProvider(IServiceProvider sp)
+        {
+            // This lambda captures the IServiceProvider 'sp' if needed, but currently doesn't use it.
+            // It provides a function that can be called later to get the TopLevel.
+            return () =>
+            {
+                if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime lifetime)
+                {
+                    // Return the MainWindow or the active TopLevel associated with it.
+                    // Using lifetime.MainWindow is generally sufficient.
+                    return lifetime.MainWindow;
+                }
+                // Log or handle the case where the lifetime or MainWindow isn't available yet or anymore.
+                Console.WriteLine("Warning: Could not get TopLevel window. Application lifetime or MainWindow is null.");
+                return null;
+            };
+        }
     }
 }

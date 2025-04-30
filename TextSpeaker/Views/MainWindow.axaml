@@ -50,9 +50,12 @@
                       DisplayMemberBinding="{Binding DisplayName}" IsEnabled="{Binding !IsBusy}"
                       PlaceholderText="loading voices..."/>
 
-            <Button Content="save as mp3"
-                    Command="{Binding SaveToFileCommand}"
-                    IsEnabled="{Binding CanProcess}" HorizontalAlignment="Left"/>
+            <StackPanel Orientation="Horizontal">
+                <Button Content="save as mp3"
+                        Command="{Binding SaveToFileCommand}"
+                        IsEnabled="{Binding SaveToFileCommand.CanExecute}" HorizontalAlignment="Left"/>
+                <Button Content="Settings" Command="{Binding OpenSettingsCommand}"/>
+            </StackPanel>
 
             <ProgressBar IsIndeterminate="True"
                          IsVisible="{Binding IsBusy}"/>

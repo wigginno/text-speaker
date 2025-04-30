@@ -1,6 +1,9 @@
+using Avalonia.Controls;
+using Avalonia.Platform.Storage;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.CognitiveServices.Speech;
+using Microsoft.Extensions.DependencyInjection;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -9,6 +12,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using TextSpeaker.Models;
 using TextSpeaker.Services;
+using TextSpeaker.Views;
 
 namespace TextSpeaker.ViewModels;
 
@@ -16,18 +20,19 @@ public partial class MainWindowViewModel : ObservableObject
 {
     private readonly IAzureSpeechService _speechService;
     private readonly IDialogService _dialogService;
-    private List<VoiceDisplayItem> _allVoices = new();
+    private readonly ISettingsService _settingsService;
+    private readonly IServiceProvider _serviceProvider;
+    private readonly Func<TopLevel?> _getTopLevelProvider;
+    private List<VoiceDisplayItem> _allVoices = new(); // Cache all loaded voices for filtering
 
-    public MainWindowViewModel(IAzureSpeechService speechService, IDialogService dialogService)
-    {
-        _speechService = speechService;
-        _dialogService = dialogService;
-        _ = LoadVoicesAsync();
-    }
+    // --- Properties ---
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(SaveToFileCommand))]
+    private string _inputText = string.Empty;
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(SaveToFileCommand))]
-    private string _inputText = "";
+    private VoiceDisplayItem? _selectedVoice;
 
     [ObservableProperty]
     private ObservableCollection<VoiceDisplayItem> _availableVoices = new();
@@ -50,7 +55,388 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty]
     private string _selectedVoiceType = "Neural";
 
-    // Mappings for language and region codes to full names
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(SelectFileCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SaveToFileCommand))]
+    private bool _isBusy;
+
+    [ObservableProperty]
+    private string _statusText = "Initializing..."; // Corrected initial text
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(SaveToFileCommand))] 
+    private bool _areCredentialsConfigured;
+
+    public MainWindowViewModel(IAzureSpeechService speechService, IDialogService dialogService, ISettingsService settingsService, IServiceProvider serviceProvider, Func<TopLevel?> getTopLevelProvider)
+    {
+        _speechService = speechService;
+        _dialogService = dialogService;
+        _settingsService = settingsService;
+        _serviceProvider = serviceProvider;
+        _getTopLevelProvider = getTopLevelProvider;
+
+        // Load voices asynchronously and log any potential errors
+        _ = LoadVoicesAsync().ContinueWith(t =>
+        {
+            if (t.Exception != null)
+                Console.WriteLine($"FATAL EXCEPTION in LoadVoicesAsync task continuation: {t.Exception}");
+        }, TaskContinuationOptions.OnlyOnFaulted);
+    }
+
+    // Helper to build a concise, user-friendly display name for a voice
+    private static string FormatVoiceName(VoiceInfo voice)
+    {
+        if (voice == null) return "Unknown Voice";
+
+        string baseName = voice.LocalName;
+        try
+        {
+            var shortName = voice.ShortName;
+            if (shortName.StartsWith(voice.Locale + "-"))
+                shortName = shortName[(voice.Locale.Length + 1)..];
+            foreach (var suf in new[] { "Neural", "Standard", "Latest" })
+            {
+                if (shortName.EndsWith(suf, StringComparison.OrdinalIgnoreCase))
+                    shortName = shortName[..^suf.Length];
+            }
+            var separators = new[] { '-', ':' };
+            baseName = shortName.Split(separators)[0];
+        }
+        catch { /* fallback to LocalName */ }
+
+        var genderPart = voice.Gender != SynthesisVoiceGender.Unknown ? $" ({voice.Gender})" : string.Empty;
+        return $"{baseName}{genderPart}";
+    }
+
+    [RelayCommand]
+    private async Task LoadVoicesAsync()
+    {
+        if (!AreSettingsValid())
+        {
+            StatusText = $"Azure settings invalid or missing. Please configure via Settings.";
+            return;
+        }
+
+        IsBusy = true;
+        StatusText = "Loading voices..."; // Update status
+        AvailableLanguages.Clear();
+        AvailableRegions.Clear();
+        AvailableVoices.Clear();
+        _allVoices.Clear();
+        SelectedLanguage = null;
+        SelectedRegion = null;
+        SelectedVoice = null;
+        AreCredentialsConfigured = false; // Assume false initially
+
+        try // Add top-level try-catch
+        {
+            var result = await _speechService.GetVoicesAsync();
+
+            if (result.IsSuccess && result.Data != null) // Allow empty list on success
+            {
+                _allVoices = result.Data.Select(v => new VoiceDisplayItem(v, FormatVoiceName(v))).ToList();
+                AreCredentialsConfigured = true; // Config OK if call succeeded
+                StatusText = "Ready. Select voice and enter text."; // Set final status for SUCCESS case
+
+                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    var languages = _allVoices
+                        .Select(v => v.Voice.Locale.Split('-')[0])
+                        .Distinct()
+                        .Select(GetLanguageName)
+                        .OrderBy(name => name)
+                        .ToList();
+
+                    AvailableLanguages.Clear();
+                    foreach (var lang in languages) AvailableLanguages.Add(lang);
+
+                    // Try to select English as default language if available
+                    string englishName = GetLanguageName("en");
+                    SelectedLanguage = AvailableLanguages.Contains(englishName) 
+                        ? englishName 
+                        : AvailableLanguages.FirstOrDefault();
+                });
+            }
+            else
+            {
+                // Update status text and clear lists on the UI thread
+                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    // Set final status for FAILURE case on UI thread
+                    StatusText = result.ErrorMessage ?? "Failed to load voices. Check Azure configuration.";
+                    AreCredentialsConfigured = false; // Set flag on UI thread too
+                    AvailableLanguages.Clear();
+                    AvailableRegions.Clear();
+                    AvailableVoices.Clear();
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"FATAL EXCEPTION in LoadVoicesAsync: {ex.ToString()}"); // Log any exception
+            // Optionally set status text here too, but ensure it's on UI thread if needed
+            try { await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => StatusText = "Critical error during voice loading."); } catch { /* Ignore dispatcher errors during exception handling */ }
+        }
+        finally
+        {
+             IsBusy = false;
+        }
+    }
+
+    [RelayCommand(CanExecute = nameof(CanSaveToFile))]
+    private async Task SaveToFileAsync()
+    {
+        if (string.IsNullOrWhiteSpace(InputText) || SelectedVoice == null)
+        {
+            StatusText = "Please enter text and select a voice.";
+            return;
+        }
+
+        if (!AreSettingsValid()) // Redundant check for safety
+        {
+             StatusText = "Cannot synthesize: Azure settings invalid or missing.";
+             await _dialogService.ShowMessageDialogAsync("Configuration Error", "Azure Speech Key and Region are not configured. Please use the Settings button.");
+             return;
+        }
+
+        IsBusy = true;
+        StatusText = "Saving audio file...";
+
+        string filter = "MP3 files (*.mp3)|*.mp3";
+        string defaultFileName = $"output_{DateTime.Now:yyyyMMdd_HHmmss}.mp3";
+
+        var outputPath = await _dialogService.ShowSaveFileDialogAsync("Save Audio As", "mp3", defaultFileName);
+
+        if (!string.IsNullOrEmpty(outputPath))
+        {
+            var result = await _speechService.SynthesizeTextToFileAsync(InputText, SelectedVoice.Name, outputPath);
+            if (result.IsSuccess)
+            {
+                StatusText = $"Audio saved successfully to {outputPath}";
+            }
+            else
+            {
+                StatusText = $"Failed to save audio: {result.ErrorMessage}";
+            }
+        }
+        else
+        {
+            StatusText = "Save operation cancelled.";
+        }
+
+        IsBusy = false;
+    }
+
+    private bool CanSaveToFile() => !IsBusy && SelectedVoice != null && !string.IsNullOrWhiteSpace(InputText) && AreSettingsValid();
+
+    [RelayCommand(CanExecute = nameof(CanSelectFile))]
+    private async Task SelectFileAsync()
+    {
+        IsBusy = true;
+        StatusText = "Loading text file...";
+
+        string filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*";
+
+        var filePath = await _dialogService.ShowOpenFileDialogAsync("Open Text File", filter);
+
+        if (!string.IsNullOrEmpty(filePath))
+        {
+            try
+            {
+                InputText = await File.ReadAllTextAsync(filePath);
+                StatusText = $"Text loaded from {filePath}";
+            }
+            catch (Exception ex)
+            {
+                StatusText = $"Error loading file: {ex.Message}";
+            }
+        }
+        else
+        {
+            StatusText = "Load operation cancelled.";
+        }
+        IsBusy = false;
+    }
+    private bool CanSelectFile() => !IsBusy;
+
+    // Helper to get full language name
+    private static string GetLanguageName(string code) =>
+        LanguageCodeToName.TryGetValue(code, out var name) ? name : code;
+
+    // Helper to get full region name
+    private static string GetRegionName(string code) =>
+        RegionCodeToName.TryGetValue(code, out var name) ? name : code;
+
+    // --- Partial Methods for Property Changes ---
+    partial void OnSelectedLanguageChanged(string? value)
+    {
+        _ = UpdateRegionsAndVoicesAsync();
+    }
+
+    partial void OnSelectedRegionChanged(string? value)
+    {
+        _ = UpdateVoicesForSelectionAsync();
+    }
+
+    partial void OnSelectedVoiceTypeChanged(string value)
+    {
+        _ = UpdateVoicesForSelectionAsync();
+    }
+
+    private async Task UpdateRegionsAndVoicesAsync()
+    {
+         if (string.IsNullOrEmpty(SelectedLanguage))
+         {
+             await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+             {
+                 AvailableRegions.Clear();
+                 AvailableVoices.Clear();
+                 SelectedRegion = null;
+                 SelectedVoice = null;
+             });
+             return;
+         }
+
+         string langCode = LanguageCodeToName.FirstOrDefault(x => x.Value == SelectedLanguage).Key ?? string.Empty;
+
+        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+        {
+             var regions = _allVoices
+                .Where(v => v.Voice.Locale.StartsWith(langCode + "-"))
+                .Select(v => v.Voice.Locale.Split('-')[1])
+                .Distinct()
+                .Select(GetRegionName)
+                .OrderBy(name => name)
+                .ToList();
+
+            AvailableRegions.Clear();
+            if (regions.Count > 1) 
+            {
+                 AvailableRegions.Add("All Regions"); 
+                 foreach (var region in regions) AvailableRegions.Add(region);
+            }
+
+            if (!string.IsNullOrEmpty(SelectedRegion) && AvailableRegions.Contains(SelectedRegion))
+            {
+                // Keep existing selection
+            }
+            else if (AvailableRegions.Count > 1)
+            {
+                // For English language, try to default to United States if available
+                if (SelectedLanguage == GetLanguageName("en"))
+                {
+                    string usName = GetRegionName("US");
+                    if (AvailableRegions.Contains(usName))
+                    {
+                        SelectedRegion = usName;
+                    }
+                    else
+                    {
+                        SelectedRegion = "All Regions";
+                    }
+                }
+                else
+                {
+                    SelectedRegion = "All Regions";
+                }
+            }
+            else if (AvailableRegions.Count == 1)
+            {
+                SelectedRegion = AvailableRegions.First();
+            }
+            else
+            {
+                SelectedRegion = null;
+            }
+        });
+    }
+
+    private async Task UpdateVoicesForSelectionAsync()
+    {
+         if (string.IsNullOrEmpty(SelectedLanguage))
+         {
+             await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => AvailableVoices.Clear());
+             return;
+         }
+
+         string langCode = LanguageCodeToName.FirstOrDefault(x => x.Value == SelectedLanguage).Key ?? string.Empty;
+         string? regionCode = (SelectedRegion == "All Regions" || string.IsNullOrEmpty(SelectedRegion))
+            ? null
+            : RegionCodeToName.FirstOrDefault(x => x.Value == SelectedRegion).Key;
+
+        var filteredByLang = _allVoices.Where(v => v.Voice.Locale.StartsWith(langCode));
+
+        var filtered = filteredByLang
+            .Where(v => regionCode == null || (v.Voice.Locale.Contains('-') && v.Voice.Locale.Split('-')[1] == regionCode))
+            .Where(v => SelectedVoiceType == "Neural"
+                ? (v.VoiceType == SynthesisVoiceType.OnlineNeural || v.VoiceType == SynthesisVoiceType.OfflineNeural)
+                : (v.VoiceType == SynthesisVoiceType.OnlineStandard || v.VoiceType == SynthesisVoiceType.OfflineStandard))
+            .OrderBy(v => v.DisplayName) 
+            .ToList();
+
+        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            AvailableVoices.Clear();
+            foreach (var voice in filtered) AvailableVoices.Add(voice);
+
+            if (SelectedVoice != null && AvailableVoices.Any(v => v.Name == SelectedVoice.Name))
+            {
+                SelectedVoice = AvailableVoices.First(v => v.Name == SelectedVoice.Name);
+            }
+            else if (AvailableVoices.Any())
+            {
+                 SelectedVoice = AvailableVoices.First();
+            }
+             else
+             {
+                 SelectedVoice = null;
+             }
+        });
+         StatusText = $"Found {AvailableVoices.Count} {SelectedVoiceType} voices for {SelectedLanguage}{(regionCode == null ? "" : "/" + SelectedRegion)}.";
+    }
+
+    // Helper to check if settings are valid
+    private bool AreSettingsValid()
+    {
+        var settings = _settingsService.CurrentSettings;
+        return !string.IsNullOrWhiteSpace(settings?.AzureSpeechKey) &&
+               !string.IsNullOrWhiteSpace(settings?.AzureSpeechRegion);
+    }
+
+    // --- Settings Command ---
+    [RelayCommand]
+    private async Task OpenSettingsAsync() // Changed to async Task
+    {
+        StatusText = "Opening settings...";
+        try
+        {
+            // Resolve the SettingsViewModel and SettingsWindow
+            var settingsViewModel = _serviceProvider.GetRequiredService<SettingsViewModel>();
+            var settingsWindow = new SettingsWindow
+            {
+                DataContext = settingsViewModel
+            };
+
+            // Simply call ShowDialogAsync - our enhanced implementation in DialogService
+            // will handle the case where no owner is found
+            await _dialogService.ShowDialogAsync(settingsWindow, null);
+
+            // After the settings window is closed:
+            StatusText = "Refreshing configuration after settings change...";
+            _speechService.RefreshConfiguration(); // Tell the service to re-read settings
+            await LoadVoicesAsync(); // Reload voices which also updates status/CanExecute
+
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error opening or handling settings window: {ex}");
+            StatusText = $"Error opening settings: {ex.Message}";
+            // Consider showing a message dialog for the error
+            await _dialogService.ShowMessageDialogAsync("Error", $"Failed to open settings: {ex.Message}");
+        }
+    }
+
+    // Mappings (LanguageCodeToName, RegionCodeToName) - Keep these defined within the ViewModel or move to a separate static class if preferred
     private static readonly Dictionary<string, string> LanguageCodeToName = new()
     {
         { "en", "English" }, { "es", "Spanish" }, { "fr", "French" }, { "de", "German" }, { "it", "Italian" },
@@ -59,7 +445,6 @@ public partial class MainWindowViewModel : ObservableObject
         { "fi", "Finnish" }, { "no", "Norwegian" }, { "da", "Danish" }, { "pl", "Polish" }, { "cs", "Czech" },
         { "el", "Greek" }, { "he", "Hebrew" }, { "th", "Thai" }, { "id", "Indonesian" }, { "vi", "Vietnamese" },
         { "hu", "Hungarian" }, { "ro", "Romanian" }, { "sk", "Slovak" }, { "uk", "Ukrainian" }, { "bg", "Bulgarian" }
-        // Add more as needed
     };
 
     private static readonly Dictionary<string, string> RegionCodeToName = new()
@@ -74,252 +459,5 @@ public partial class MainWindowViewModel : ObservableObject
         { "CZ", "Czech Republic" }, { "GR", "Greece" }, { "IL", "Israel" }, { "TH", "Thailand" }, { "ID", "Indonesia" },
         { "VN", "Vietnam" }, { "HU", "Hungary" }, { "RO", "Romania" }, { "SK", "Slovakia" }, { "UA", "Ukraine" },
         { "BG", "Bulgaria" }
-        // Add more as needed
     };
-
-    // Helper to get full language name
-    private static string GetLanguageName(string code) =>
-        LanguageCodeToName.TryGetValue(code, out var name) ? name : code;
-
-    // Helper to get full region name
-    private static string GetRegionName(string code) =>
-        RegionCodeToName.TryGetValue(code, out var name) ? name : code;
-
-    [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(SaveToFileCommand))]
-    private VoiceDisplayItem? _selectedVoice;
-
-    [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(SelectFileCommand))]
-    [NotifyCanExecuteChangedFor(nameof(SaveToFileCommand))]
-    private bool _isBusy;
-
-    [ObservableProperty]
-    private string _statusText = "ready.";
-
-    // Helper to build a concise, user-friendly display name for a voice
-    private static string FormatVoiceName(VoiceInfo voice)
-    {
-        if (voice == null) return "Unknown Voice";
-
-        // Derive a base voice name from ShortName or LocalName
-        string baseName = voice.LocalName;
-        try
-        {
-            var shortName = voice.ShortName;
-            // Remove locale prefix
-            if (shortName.StartsWith(voice.Locale + "-"))
-                shortName = shortName[(voice.Locale.Length + 1)..];
-            // Remove common suffixes
-            foreach (var suf in new[] { "Neural", "Standard", "Latest" })
-            {
-                if (shortName.EndsWith(suf, StringComparison.OrdinalIgnoreCase))
-                    shortName = shortName[..^suf.Length];
-            }
-            // If still contains dash or colon, take first segment
-            var separators = new[] { '-', ':' };
-            baseName = shortName.Split(separators)[0];
-        }
-        catch { /* fallback to LocalName */ }
-
-        var genderPart = voice.Gender != SynthesisVoiceGender.Unknown ? $" ({voice.Gender})" : string.Empty;
-
-        return $"{baseName}{genderPart}";
-    }
-
-    [RelayCommand]
-    private async Task LoadVoicesAsync()
-    {
-        IsBusy = true;
-        StatusText = "Loading voices...";
-        AvailableVoices.Clear();
-        try
-        {
-            // Map selected language & region names back to locale code
-            string langCode = LanguageCodeToName.FirstOrDefault(x => x.Value == SelectedLanguage).Key ?? "en";
-            string regionCode = RegionCodeToName.FirstOrDefault(x => x.Value == SelectedRegion).Key ?? "US";
-            string locale = $"{langCode}-{regionCode}";
-            var voices = await _speechService.GetVoicesAsync(locale);
-            _allVoices = voices.Select(v => new VoiceDisplayItem(v, FormatVoiceName(v))).ToList();
-            // Ensure UI-bound collection is updated on UI thread
-            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                // Extract unique languages and regions
-                var languages = _allVoices
-                    .Select(v => v.Voice.Locale.Split('-')[0])
-                    .Distinct()
-                    .OrderBy(l => GetLanguageName(l))
-                    .ToList();
-                AvailableLanguages.Clear();
-                foreach (var lang in languages)
-                    AvailableLanguages.Add(GetLanguageName(lang));
-
-                // Set default language to English if available, otherwise first
-                SelectedLanguage = AvailableLanguages.Contains("English") ? "English" : AvailableLanguages.FirstOrDefault();
-
-                // Extract unique regions for the selected language
-                UpdateRegionsAndVoices(_allVoices);
-            });
-        }
-        catch (Exception ex)
-        {
-            StatusText = $"Failed to load voices: {ex.Message}";
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    partial void OnSelectedLanguageChanged(string? value)
-    {
-        // When language changes, update regions and voices
-        _ = UpdateRegionsAndVoicesAsync();
-    }
-
-    partial void OnSelectedRegionChanged(string? value)
-    {
-        // When region changes, update voices
-        _ = UpdateVoicesForSelectionAsync();
-    }
-
-    partial void OnSelectedVoiceTypeChanged(string value)
-    {
-        // Refresh voice list when user toggles neural/standard
-        _ = UpdateVoicesForSelectionAsync();
-    }
-
-    private async Task UpdateRegionsAndVoicesAsync()
-    {
-        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-        {
-            UpdateRegionsAndVoices(_allVoices);
-        });
-    }
-
-    private void UpdateRegionsAndVoices(List<VoiceDisplayItem> voices)
-    {
-        // Find the language code for the selected language name
-        string? langCode = LanguageCodeToName.FirstOrDefault(x => x.Value == SelectedLanguage).Key;
-        // Filter voices by selected language code
-        var filteredByLang = voices
-            .Where(v => langCode == null || v.Voice.Locale.StartsWith(langCode))
-            .ToList();
-
-        // Extract unique regions
-        var regions = filteredByLang
-            .Select(v => v.Voice.Locale.Contains('-') ? v.Voice.Locale.Split('-')[1] : v.Voice.Locale)
-            .Distinct()
-            .OrderBy(r => GetRegionName(r))
-            .ToList();
-
-        AvailableRegions.Clear();
-        foreach (var region in regions)
-            AvailableRegions.Add(GetRegionName(region));
-
-        // Set default region to United States if available, otherwise first
-        SelectedRegion = AvailableRegions.Contains("United States") ? "United States" : AvailableRegions.FirstOrDefault();
-
-        // Now update voices for this selection
-        UpdateVoicesForSelection(filteredByLang);
-    }
-
-    private async Task UpdateVoicesForSelectionAsync()
-    {
-        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-        {
-            string? langCode = LanguageCodeToName.FirstOrDefault(x => x.Value == SelectedLanguage).Key;
-            var filteredByLang = _allVoices
-                .Where(v => langCode == null || v.Voice.Locale.StartsWith(langCode))
-                .ToList();
-            UpdateVoicesForSelection(filteredByLang);
-        });
-    }
-
-    private void UpdateVoicesForSelection(List<VoiceDisplayItem> filteredByLang)
-    {
-        // Further filter by region
-        // Find the region code for the selected region name
-        string? regionCode = RegionCodeToName.FirstOrDefault(x => x.Value == SelectedRegion).Key;
-        var filtered = filteredByLang
-            .Where(v => regionCode == null || (v.Voice.Locale.Contains('-') && v.Voice.Locale.Split('-')[1] == regionCode))
-            .Where(v => SelectedVoiceType == "Neural"
-                ? (v.VoiceType == SynthesisVoiceType.OnlineNeural || v.VoiceType == SynthesisVoiceType.OfflineNeural)
-                : (v.VoiceType == SynthesisVoiceType.OnlineStandard || v.VoiceType == SynthesisVoiceType.OfflineStandard))
-            .ToList();
-
-        AvailableVoices.Clear();
-        foreach (var voice in filtered.OrderBy(v => v.DisplayName))
-            AvailableVoices.Add(voice);
-
-        SelectedVoice = AvailableVoices.FirstOrDefault();
-        StatusText = filtered.Count > 0 ? $"Loaded {filtered.Count} voices." : "No voices found.";
-    }
-
-    [RelayCommand(CanExecute = nameof(CanSelectFile))]
-    private async Task SelectFileAsync()
-    {
-        StatusText = "Selecting file...";
-        var filePath = await _dialogService.ShowOpenFileDialogAsync("Select a text file", "Text files (*.txt)|*.txt|All files (*.*)|*.*");
-        if (!string.IsNullOrEmpty(filePath))
-        {
-            IsBusy = true;
-            try
-            {
-                InputText = await File.ReadAllTextAsync(filePath);
-                StatusText = $"Loaded file: {Path.GetFileName(filePath)}";
-            }
-            catch (Exception ex)
-            {
-                StatusText = $"Failed to load file: {ex.Message}";
-            }
-            finally
-            {
-                IsBusy = false;
-            }
-        }
-        else
-        {
-            StatusText = "File selection cancelled.";
-        }
-    }
-
-    [RelayCommand(CanExecute = nameof(CanProcess))]
-    private async Task SaveToFileAsync()
-    {
-        StatusText = "Selecting output file...";
-        var filePath = await _dialogService.ShowSaveFileDialogAsync("Save MP3 file", "MP3 files (*.mp3)|*.mp3", $"output_{DateTime.Now:yyyyMMdd_HHmmss}.mp3");
-        if (!string.IsNullOrEmpty(filePath))
-        {
-            IsBusy = true;
-            try
-            {
-                var result = await _speechService.SynthesizeTextToFileAsync(InputText, SelectedVoice!.Voice.Name, filePath);
-                if (result)
-                {
-                    StatusText = $"Audio saved to: {Path.GetFileName(filePath)}";
-                }
-                else
-                {
-                    StatusText = "Failed to synthesize audio.";
-                }
-            }
-            catch (Exception ex)
-            {
-                StatusText = $"Error: {ex.Message}";
-            }
-            finally
-            {
-                IsBusy = false;
-            }
-        }
-        else
-        {
-            StatusText = "Save operation cancelled.";
-        }
-    }
-
-    private bool CanSelectFile() => !IsBusy;
-
-    private bool CanProcess() => !IsBusy && !string.IsNullOrWhiteSpace(InputText) && SelectedVoice != null;
 }

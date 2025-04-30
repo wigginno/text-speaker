@@ -1,51 +1,46 @@
-# TextSpeaker
+# Text Speaker
 
-TextSpeaker is a fast, simple, and modern desktop application for converting text to speech using Azure AI Speech. Built with Avalonia UI for .NET, it provides a streamlined interface for generating high-quality MP3 audio from your text.
+A simple desktop app for TTS using Azure AI Speech services. Choose a voice and convert your text into an audio file (mp3).
 
 ## Features
 
-- Input text via file or direct paste
-- Select from available Azure voices
-- Output speech as MP3 files
-- Cross-platform Avalonia UI desktop application
-- Simple, keyboard-friendly interface
+*   Convert text to speech using Azure AI Services
+*   Input text directly or load from `.txt` files
+*   Select language, region, voice type (Neural/Standard), and voice
+*   Voice list automatically filtered based on your selections
+*   Save synthesized audio output to an MP3 file
+*   Configure Azure credentials easily via a Settings window
 
 ## Requirements
 
-- [.NET 9 SDK](https://dotnet.microsoft.com/download)
-- Azure AI Speech subscription key and service region
+*   An Azure account with an active speech service resource
+*   Your key and region for that resource
+*   .NET 9 Runtime installed to run the application (.NET 8 or 10 might work too, haven't tested)
 
-## Setup / Configuration
+## Configuration
 
-TextSpeaker requires Azure AI Speech credentials. For development, use the following commands to store your credentials securely with [dotnet user-secrets](https://learn.microsoft.com/en-us/aspnet/core/security/app-secrets):
+On first run:
+1.  Click the `Settings` button in the main window
+2.  Enter your Azure Speech Key and the Region name (e.g., `eastus`, `westus2`)
+3.  Click `Save`
+4.  Close the Settings window
 
-```sh
-dotnet user-secrets init --project ./TextSpeaker/TextSpeaker.csproj
-dotnet user-secrets set "AzureSpeech:SubscriptionKey" "<your-subscription-key>" --project ./TextSpeaker/TextSpeaker.csproj
-dotnet user-secrets set "AzureSpeech:ServiceRegion" "<your-service-region>" --project ./TextSpeaker/TextSpeaker.csproj
-```
+The app will automatically refresh its configuration and attempt to load the available voices using your new credentials.
 
-> **Note:** These commands are for development only. Do not use user-secrets for production deployment.
+Settings are stored locally in `settings.json`. The path is usually in your user's application data folder (e.g., `%APPDATA%\TextSpeaker` on Windows, `~/.config/TextSpeaker` on Linux, `~/Library/Application Support/TextSpeaker` on macOS). You can see the exact path in the Settings window status bar.
 
-## Building
+## Usage
 
-```sh
+1.  Enter or paste text into the main text box, or click `select .txt file` to load from a file.
+2.  Use the dropdowns to select the desired Language, Region (if applicable), Voice Type, and the specific Voice. The lists will update as you make selections.
+3.  Click `save as mp3`.
+4.  A file dialog will pop up. Choose where to save the MP3 file and click Save.
+
+## Building from Source
+
+```bash
+git clone https://github.com/wigginno/text-speaker.git
+cd text-speaker/TextSpeaker
 dotnet build
+dotnet run
 ```
-
-## Running
-
-```sh
-dotnet run --project ./TextSpeaker/TextSpeaker.csproj
-```
-
-## Dependencies
-
-- [Avalonia UI](https://avaloniaui.net/) - cross-platform .NET UI framework
-- [Azure AI Speech SDK](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/) - text-to-speech engine
-- [CommunityToolkit.Mvvm](https://learn.microsoft.com/en-us/dotnet/communitytoolkit/mvvm/) - MVVM utilities for .NET
-- .NET 8
-
-## License
-
-See [LICENSE](./LICENSE) for details.
