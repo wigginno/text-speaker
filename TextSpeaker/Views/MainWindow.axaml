@@ -3,18 +3,62 @@
         xmlns:vm="using:TextSpeaker.ViewModels"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
-        x:Class="TextSpeaker.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
+        mc:Ignorable="d" d:DesignWidth="500" d:DesignHeight="450"
+        x:Class="TextSpeaker.Views.MainWindow"
         Icon="/Assets/avalonia-logo.ico"
-        Title="TextSpeaker">
-
+        Title="Text Speaker"
+        WindowStartupLocation="CenterScreen">
     <Design.DataContext>
-        <!-- This only sets the DataContext for the previewer in an IDE,
-             to set the actual DataContext for runtime, set the DataContext property in code (look at App.axaml.cs) -->
         <vm:MainWindowViewModel/>
     </Design.DataContext>
 
-    <TextBlock Text="{Binding Greeting}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+    <Panel Margin="15">
+        <StackPanel Spacing="10">
+            <TextBlock Text="input text:"/>
+            <TextBox Text="{Binding InputText}"
+                     AcceptsReturn="True"
+                     Watermark="paste text here or select a.txt file"
+                     Height="200"
+                     IsEnabled="{Binding !IsBusy}"/>
 
+            <Button Content="select.txt file"
+                    Command="{Binding SelectFileCommand}"
+                    IsEnabled="{Binding !IsBusy}"
+                    HorizontalAlignment="Left"/>
+
+            <TextBlock Text="select language:"/>
+            <ComboBox ItemsSource="{Binding AvailableLanguages}"
+                      SelectedItem="{Binding SelectedLanguage}"
+                      IsEnabled="{Binding !IsBusy}"
+                      PlaceholderText="choose language"/>
+
+            <TextBlock Text="select region:"/>
+            <ComboBox ItemsSource="{Binding AvailableRegions}"
+                      SelectedItem="{Binding SelectedRegion}"
+                      IsEnabled="{Binding !IsBusy}"
+                      PlaceholderText="choose region"/>
+
+            <TextBlock Text="select voice type:"/>
+            <ComboBox ItemsSource="{Binding VoiceTypeOptions}"
+                      SelectedItem="{Binding SelectedVoiceType}"
+                      IsEnabled="{Binding !IsBusy}" />
+
+            <TextBlock Text="select voice:"/>
+            <ComboBox ItemsSource="{Binding AvailableVoices}"
+                      SelectedItem="{Binding SelectedVoice}"
+                      DisplayMemberBinding="{Binding DisplayName}" IsEnabled="{Binding !IsBusy}"
+                      PlaceholderText="loading voices..."/>
+
+            <Button Content="save as mp3"
+                    Command="{Binding SaveToFileCommand}"
+                    IsEnabled="{Binding CanProcess}" HorizontalAlignment="Left"/>
+
+            <ProgressBar IsIndeterminate="True"
+                         IsVisible="{Binding IsBusy}"/>
+
+            <TextBlock Text="{Binding StatusText}"
+                       TextWrapping="Wrap"/>
+        </StackPanel>
+    </Panel>
 </Window>
