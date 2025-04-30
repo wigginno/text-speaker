@@ -202,7 +202,7 @@ public partial class MainWindowViewModel : ObservableObject
         IsBusy = true;
         StatusText = "Saving audio file...";
 
-        string filter = "MP3 files (*.mp3)|*.mp3";
+        // Removed unused filter variable
         string defaultFileName = $"output_{DateTime.Now:yyyyMMdd_HHmmss}.mp3";
 
         var outputPath = await _dialogService.ShowSaveFileDialogAsync("Save Audio As", "mp3", defaultFileName);

@@ -10,7 +10,7 @@ namespace TextSpeaker.Services
     public class SettingsService : ISettingsService
     {
         private readonly string _settingsFilePath;
-        private readonly JsonSerializerOptions _jsonOptions;
+        // Removed _jsonOptions as we'll use source generation context
         private Settings _currentSettings; // Backing field for CurrentSettings
 
         // Implementation of the CurrentSettings property from the interface
@@ -19,11 +19,7 @@ namespace TextSpeaker.Services
         public SettingsService(string settingsFilePath)
         {
             _settingsFilePath = settingsFilePath;
-            _jsonOptions = new JsonSerializerOptions
-            {
-                WriteIndented = true, // For readability
-                PropertyNameCaseInsensitive = true
-            };
+            // Removed _jsonOptions initialization
 
             // Ensure the directory exists
             var directory = Path.GetDirectoryName(_settingsFilePath);
@@ -50,7 +46,8 @@ namespace TextSpeaker.Services
                     {
                         return new Settings(); // Return default if file is empty
                     }
-                    var settings = JsonSerializer.Deserialize<Settings>(json, _jsonOptions);
+                    // Use source-generated context for deserialization
+                    var settings = JsonSerializer.Deserialize(json, SettingsJsonContext.Default.Settings);
                     return settings ?? new Settings(); // Return default if deserialization yields null
                 }
             }
@@ -86,7 +83,8 @@ namespace TextSpeaker.Services
                     }
                     else
                     {
-                        loadedSettings = JsonSerializer.Deserialize<Settings>(json, _jsonOptions) ?? new Settings();
+                        // Use source-generated context for deserialization
+                        loadedSettings = JsonSerializer.Deserialize(json, SettingsJsonContext.Default.Settings) ?? new Settings();
                     }
                 }
                 else
@@ -121,7 +119,8 @@ namespace TextSpeaker.Services
 
             try
             {
-                string json = JsonSerializer.Serialize(settings, _jsonOptions);
+                // Use source-generated context for serialization
+                string json = JsonSerializer.Serialize(settings, SettingsJsonContext.Default.Settings);
                 await File.WriteAllTextAsync(_settingsFilePath, json);
 
                 // Update the current settings in memory after successful save

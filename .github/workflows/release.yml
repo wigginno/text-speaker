@@ -1,0 +1,100 @@
+name: Release TextSpeaker
+
+on:
+  push:
+    tags:
+      - 'v*.*.*' # Trigger on version tags
+
+jobs:
+  build-release:
+    name: Build and Release
+    runs-on: ubuntu-latest # Using ubuntu-latest for cross-compilation
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x' # Ensure this matches the project's target framework
+
+      - name: Restore dependencies
+        run: dotnet restore TextSpeaker/TextSpeaker.csproj
+
+      # --- Build, Publish, and Package for each RID ---
+
+      - name: Publish Windows x64
+        run: dotnet publish TextSpeaker/TextSpeaker.csproj -c Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -o ./publish/win-x64/
+      - name: Package Windows x64
+        run: zip -jr TextSpeaker-win-x64.zip ./publish/win-x64/
+
+      - name: Publish macOS x64
+        run: dotnet publish TextSpeaker/TextSpeaker.csproj -c Release --runtime osx-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -o ./publish/osx-x64/
+      - name: Package macOS x64
+        run: zip -jr TextSpeaker-osx-x64.zip ./publish/osx-x64/
+
+      - name: Publish macOS arm64
+        run: dotnet publish TextSpeaker/TextSpeaker.csproj -c Release --runtime osx-arm64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -o ./publish/osx-arm64/
+      - name: Package macOS arm64
+        run: zip -jr TextSpeaker-osx-arm64.zip ./publish/osx-arm64/
+
+      - name: Publish Linux x64
+        run: dotnet publish TextSpeaker/TextSpeaker.csproj -c Release --runtime linux-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -o ./publish/linux-x64/
+      - name: Package Linux x64
+        run: zip -jr TextSpeaker-linux-x64.zip ./publish/linux-x64/
+
+      # --- Create Draft GitHub Release ---
+
+      - name: Create Draft Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          release_name: Release ${{ github.ref_name }}
+          draft: true
+          prerelease: false
+
+      # --- Upload Artifacts ---
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./TextSpeaker-win-x64.zip
+          asset_name: TextSpeaker-win-x64.zip
+          asset_content_type: application/zip
+
+      - name: Upload macOS x64 Artifact
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./TextSpeaker-osx-x64.zip
+          asset_name: TextSpeaker-osx-x64.zip
+          asset_content_type: application/zip
+
+      - name: Upload macOS arm64 Artifact
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./TextSpeaker-osx-arm64.zip
+          asset_name: TextSpeaker-osx-arm64.zip
+          asset_content_type: application/zip
+
+      - name: Upload Linux Artifact
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./TextSpeaker-linux-x64.zip
+          asset_name: TextSpeaker-linux-x64.zip
+          asset_content_type: application/zip
