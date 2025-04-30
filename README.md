@@ -4,6 +4,12 @@ A simple desktop app for TTS using Azure AI Speech services. Choose a voice and 
 
 ![image](https://github.com/user-attachments/assets/39951665-5a26-4b95-83b0-155fd0fa910a)
 
+## Download/Install
+
+Check the [releases page](https://github.com/wigginno/text-speaker/releases) to download prebuilt binaries for Windows, Linux, and MacOS. Extract the zip and run the TextSpeaker executable. I might code sign these binaries later.
+
+Your other option is to grab the [.net SDK](https://dotnet.microsoft.com/en-us/download) 9 and [build from source](#building-from-source).
+
 ## Features
 
 *   Convert text to speech using Azure AI Services
