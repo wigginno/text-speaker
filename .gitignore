@@ -1,0 +1,57 @@
+# .NET build artifacts
+**/bin/
+**/obj/
+
+# Rider/JetBrains IDE files
+.idea/
+*.sln.iml
+
+# User-specific files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Icon?
+Desktop.ini
+
+# NuGet packages
+*.nupkg
+# The packages folder can be ignored if using PackageReference
+**/packages/
+# NuGet v3's project.json files produces this lock file
+project.lock.json
+# NuGet v4.0+ lock file
+packages.lock.json
+# NuGet package restore result
+_UpgradeReport_Files/
+UpgradeLog*.XML
+UpgradeLog*.htm
+ServiceFabricBackup/
+*.snupkg
+
+# Visual Studio Code settings
+.vscode/
+
+# Build results
+*.Build.csdef
+
+# Avalonia XAML Designer cache
+.avalonia/
+
+# Resharper files
+*.DotSettings.user
+
+# Backup & temporary files
+*~
+*.bak
+*.tmp
+*.swp
+*.swo
+
+# Do not ignore .gitignore itself
+!.gitignore
