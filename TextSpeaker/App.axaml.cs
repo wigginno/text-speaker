@@ -103,11 +103,10 @@ public partial class App : Application
         }
 
         // Updated signature: returns Task<ServiceResult<bool>>
-        public Task<ServiceResult<bool>> SynthesizeTextToFileAsync(string text, string voiceName, string outputFilePath)
+        public Task<ServiceResult<bool>> SynthesizeTextToFileAsync(string text, string voiceName, string outputFilePath, IProgress<string> progress)
         {
-            // Simulate success for the designer
-            Console.WriteLine($"[Design Time] Synthesize: '{text.Substring(0, Math.Min(20, text.Length))}' with '{voiceName}' to '{outputFilePath}'");
-            // Added null for ErrorMessage
+            // Simulate success for design time
+            progress?.Report("Design-time synthesis complete.");
             return Task.FromResult(new ServiceResult<bool>(true, true, null));
         }
 

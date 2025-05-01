@@ -200,7 +200,7 @@ public partial class MainWindowViewModel : ObservableObject
         }
 
         IsBusy = true;
-        StatusText = "Saving audio file...";
+        StatusText = "Starting synthesis..."; // Initial status
 
         // Removed unused filter variable
         string defaultFileName = $"output_{DateTime.Now:yyyyMMdd_HHmmss}.mp3";
@@ -209,14 +209,39 @@ public partial class MainWindowViewModel : ObservableObject
 
         if (!string.IsNullOrEmpty(outputPath))
         {
-            var result = await _speechService.SynthesizeTextToFileAsync(InputText, SelectedVoice.Name, outputPath);
-            if (result.IsSuccess)
+            // Create progress reporter
+            var progressReporter = new Progress<string>(update => StatusText = update);
+
+            try // Add try-catch around the service call for robustness
             {
-                StatusText = $"Audio saved successfully to {outputPath}";
+                // Call the updated service method, passing the progress reporter
+                var result = await _speechService.SynthesizeTextToFileAsync(
+                    InputText,
+                    SelectedVoice.Name,
+                    outputPath,
+                    progressReporter // Pass the reporter here
+                );
+
+                // Handle the result...
+                if (result.IsSuccess)
+                {
+                    // StatusText is now updated by the final report from the service.
+                    // No explicit success message needed here unless desired as an override.
+                    // StatusText = "Synthesis complete!"; // Optional final override
+                }
+                else
+                {
+                    // Failure message is still relevant here
+                    StatusText = $"Synthesis failed: {result.ErrorMessage}";
+                    // Consider showing a dialog for failure as well
+                    // await _dialogService.ShowMessageDialogAsync("Synthesis Error", $"Failed to save audio: {result.ErrorMessage}");
+                }
             }
-            else
+            catch (Exception ex)
             {
-                StatusText = $"Failed to save audio: {result.ErrorMessage}";
+                 // Catch unexpected errors during the synthesis process itself
+                StatusText = $"Error during synthesis: {ex.Message}";
+                await _dialogService.ShowMessageDialogAsync("Synthesis Error", $"An unexpected error occurred during synthesis: {ex.Message}");
             }
         }
         else
