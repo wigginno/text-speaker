@@ -6,9 +6,9 @@ A simple desktop app for TTS using Azure AI Speech services. Choose a voice and 
 
 ## Download/Install
 
-Check the [releases page](https://github.com/wigginno/text-speaker/releases) to download prebuilt binaries for Windows, Linux, and MacOS. Extract the zip and run the TextSpeaker executable. I might code sign these binaries later.
+Check the [releases page](https://github.com/wigginno/text-speaker/releases) to download prebuilt binaries for Windows, Linux, and MacOS. Extract the zip and run the TextSpeaker executable. **Prequisite for Windows**: Install [Visual C++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170#latest-supported-redistributable-version).
 
-Your other option is to grab the [.net SDK](https://dotnet.microsoft.com/en-us/download) 9 and [build from source](#building-from-source).
+Your other option is to grab the [.net SDK](https://dotnet.microsoft.com/en-us/download) 9 and then [build from source](#building-from-source).
 
 ## Features
 
